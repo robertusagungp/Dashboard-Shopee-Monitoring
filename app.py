@@ -1,19 +1,8 @@
-import re
-import numpy as np
-import pandas as pd
 import streamlit as st
+import pandas as pd
+import numpy as np
 import plotly.express as px
-
-# ============================================================
-# OPTIONAL AUTO REFRESH
-# ============================================================
-
-try:
-    from streamlit_autorefresh import st_autorefresh
-    AUTO_REFRESH_AVAILABLE = True
-except:
-    AUTO_REFRESH_AVAILABLE = False
-
+import re
 
 # ============================================================
 # CONFIG
@@ -29,13 +18,21 @@ DEFAULT_GID = "788089194"
 
 
 # ============================================================
-# FORMAT RUPIAH (DISPLAY ONLY)
+# AUTO REFRESH
+# ============================================================
+
+try:
+    from streamlit_autorefresh import st_autorefresh
+    st_autorefresh(interval=300000, key="refresh")
+except:
+    pass
+
+
+# ============================================================
+# FORMAT RUPIAH DISPLAY
 # ============================================================
 
 def rupiah(x):
-
-    if pd.isna(x):
-        return "Rp0"
 
     try:
         x = float(x)
@@ -49,17 +46,31 @@ def rupiah(x):
 
 
 # ============================================================
-# SAFE NUMERIC (NO STRING PARSING)
+# FIX RUPIAH PARSER (CRITICAL FIX)
 # ============================================================
+
+def parse_rupiah(series):
+
+    s = series.astype(str)
+
+    s = (
+        s
+        .str.replace(r"[^\d,.\-]", "", regex=True)
+        .str.replace(".", "", regex=False)
+        .str.replace(",", ".", regex=False)
+    )
+
+    return pd.to_numeric(
+        s,
+        errors="coerce"
+    ).fillna(0)
+
 
 def num(df, col):
 
     if col and col in df.columns:
 
-        return pd.to_numeric(
-            df[col],
-            errors="coerce"
-        ).fillna(0)
+        return parse_rupiah(df[col])
 
     return pd.Series(
         0,
@@ -74,25 +85,16 @@ def txt(df, col):
 
         return df[col].astype(str)
 
-    return pd.Series(
-        "",
-        index=df.index
-    )
+    return pd.Series("", index=df.index)
 
 
 def dt(df, col):
 
     if col and col in df.columns:
 
-        return pd.to_datetime(
-            df[col],
-            errors="coerce"
-        )
+        return pd.to_datetime(df[col], errors="coerce")
 
-    return pd.Series(
-        pd.NaT,
-        index=df.index
-    )
+    return pd.Series(pd.NaT, index=df.index)
 
 
 # ============================================================
@@ -112,7 +114,7 @@ def load(sheet_id, gid):
 
 
 # ============================================================
-# PREPROCESS (NUMERIC NATIVE)
+# PREPROCESS
 # ============================================================
 
 @st.cache_data(ttl=300)
@@ -134,7 +136,6 @@ def preprocess(raw, mapping):
 
     d["qty"] = num(d, mapping["qty"])
 
-    # Shopee official components
     d["harga_produk"] = num(d, mapping["harga_produk"])
 
     d["ongkir_pembeli"] = num(d, mapping["ongkir_pembeli"])
@@ -154,6 +155,7 @@ def preprocess(raw, mapping):
     d["cogs"] = num(d, mapping["cogs"])
 
     # Official Shopee Net Revenue
+
     d["net_revenue"] = (
 
         d["harga_produk"]
@@ -188,13 +190,13 @@ def metrics(d):
 
     orders = d["order_id"].nunique()
 
-    net = d["net_revenue"].sum()
-
     gross = d["harga_produk"].sum()
 
-    qty = d["qty"].sum()
+    net = d["net_revenue"].sum()
 
     profit = d["gross_profit"].sum()
+
+    qty = d["qty"].sum()
 
     repeat = (
 
@@ -210,8 +212,8 @@ def metrics(d):
         "orders": orders,
         "gross": gross,
         "net": net,
-        "qty": qty,
         "profit": profit,
+        "qty": qty,
         "repeat_rate": repeat_rate
 
     }
@@ -223,14 +225,6 @@ def metrics(d):
 
 st.title("Shopee Enterprise BI Dashboard")
 
-if AUTO_REFRESH_AVAILABLE:
-
-    st_autorefresh(
-        interval=300000,
-        key="refresh"
-    )
-
-# Sidebar mapping
 
 with st.sidebar:
 
@@ -246,9 +240,11 @@ with st.sidebar:
         DEFAULT_GID
     )
 
+
 raw = load(sheet_id, gid)
 
 cols = ["(none)"] + list(raw.columns)
+
 
 with st.sidebar:
 
@@ -256,12 +252,10 @@ with st.sidebar:
 
     def pick(name):
 
-        v = st.selectbox(
-            name,
-            cols
-        )
+        v = st.selectbox(name, cols)
 
         return None if v == "(none)" else v
+
 
     mapping = {
 
@@ -281,9 +275,10 @@ with st.sidebar:
         "layanan": pick("Service Fee"),
         "lain": pick("Other Fee"),
 
-        "cogs": pick("COGS (optional)")
+        "cogs": pick("COGS")
 
     }
+
 
 d = preprocess(raw, mapping)
 
@@ -321,11 +316,7 @@ trend = (
 
 )
 
-fig = px.line(
-    trend,
-    x="event_date",
-    y="net"
-)
+fig = px.line(trend, x="event_date", y="net")
 
 st.plotly_chart(fig, use_container_width=True)
 
@@ -341,8 +332,8 @@ prod = (
     d.groupby("product")
     .agg(
         net=("net_revenue", "sum"),
-        qty=("qty", "sum"),
-        profit=("gross_profit", "sum")
+        profit=("gross_profit", "sum"),
+        qty=("qty", "sum")
     )
     .sort_values("net", ascending=False)
 
@@ -352,26 +343,7 @@ st.dataframe(prod)
 
 
 # ============================================================
-# RECOMMENDATION
-# ============================================================
-
-st.subheader("Recommendation")
-
-winners = prod.head(10)
-
-losers = prod.tail(10)
-
-st.write("Scale these:")
-
-st.dataframe(winners)
-
-st.write("Fix or drop these:")
-
-st.dataframe(losers)
-
-
-# ============================================================
-# RAW
+# RAW DATA
 # ============================================================
 
 with st.expander("Raw Data"):
